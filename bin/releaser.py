@@ -29,7 +29,9 @@ Commands:
     download_urls     print the latest source code download URLs for every JDK version
     download          download the latest source code for every JDK version
     build_parser      build the parser JAR
-    create_jfr        create the JFR file for every available GC
+    list_gc_options   print all available GC options for the current JDK
+    build_jfc         create the JFC configuration file (call once before parallel create_jfr)
+    create_jfr        create the JFR file for every available GC (or single GC if GC env var set)
     build_versions    build the extended metadata file for every available JDK version
     build             build the JAR with the extended metadata files
     deploy_mvn        deploy the JARs to Maven
@@ -47,6 +49,7 @@ by appending "=force" to them, e.g. "all=force".
 
 Environment variables:
     LOG               set to "true" to print more information
+    GC                if set, create_jfr will only create JFR file for this GC option
 """
 
 CURRENT_DIR = os.path.abspath(
@@ -375,6 +378,7 @@ def list_gc_options() -> List[str]:
 
 def create_jfc():
     """ Create a JFC file for the current JDK """
+    print("Creating JFC configuration file...")
     with open(os.getenv("JAVA_HOME") + "/lib/jfr/profile.jfc") as f:
         lines = []
         for line in f.readlines():
@@ -384,12 +388,29 @@ def create_jfc():
                 lines.append(line)
         with open(JFC_FILE, "w") as f2:
             f2.write("\n".join(lines))
+    print(f"✅ JFC file created at {JFC_FILE}")
 
 
-def create_jfr(gc_option: str = None, force: bool = False):
+def build_jfc():
+    """ Wrapper for create_jfc to be called from CLI """
     create_jfc()
     if not os.path.exists(RENAISSANCE_JAR):
         download_benchmarks()
+
+
+def create_jfr(gc_option: str = None, force: bool = False):
+    # Create JFC if it doesn't exist (for non-CI usage)
+    if not os.path.exists(JFC_FILE):
+        create_jfc()
+    if not os.path.exists(RENAISSANCE_JAR):
+        download_benchmarks()
+
+    # Check for GC environment variable
+    gc_env = os.getenv("GC")
+    if gc_env and not gc_option:
+        gc_option = gc_env
+        print(f"Using GC option from environment: {gc_option}")
+
     jfr_file = jfr_file_name(gc_option)
     if os.path.exists(jfr_file) and not force and os.path.getmtime(
             jfr_file) > os.path.getmtime(JFC_FILE):
@@ -666,7 +687,7 @@ class CLIArgs:
 
 def parse_cli_args() -> CLIArgs:
     available_commands = ["versions", "download_urls", "download",
-                          "build_parser", "create_jfr", "build_versions",
+                          "build_parser", "list_gc_options", "build_jfc", "create_jfr", "build_versions",
                           "build", "deploy_mvn", "deploy_gh", "deploy",
                           "deploy_release", "clear", "all", "tags"]
     forcable_commands = ["all", "create_jfr", "build_versions"]
@@ -717,6 +738,8 @@ def cli():
         "download_urls": download_urls,
         "download": download,
         "build_parser": build_parser,
+        "list_gc_options": lambda: print(" ".join(list_gc_options())),
+        "build_jfc": build_jfc,
         "create_jfr": create_jfr,
         "build_versions": build_versions,
         "build": build,
