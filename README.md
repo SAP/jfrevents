@@ -208,6 +208,39 @@ Environment variables:
 Run `bin/releaser.py download build_parser build_versions build deploy`.
 Only run `bin/releaser.py create_jfr` if you have a new JDK version installed.
 
+### GitHub Actions CI/CD
+
+The project uses GitHub Actions to automatically build and deploy snapshots to Maven Central:
+- On every push to `main`
+- Every Sunday at midnight UTC (scheduled)
+- Manually via workflow dispatch (with cache control options)
+
+**Manual Trigger Cache Modes:**
+
+When manually triggering the workflow, you can choose from these cache strategies:
+- **normal** (default) - Use all caches (`.cache` and `jfr` folders)
+- **rebuild-jfr** - Use `.cache` (JDK downloads) but force regenerate JFR benchmark files
+- **rebuild-all** - Rebuild everything from scratch (skip all caches)
+
+**Cache Management:**
+- `.cache` folder (downloaded JDK sources, etc.) - Cached monthly per Java version, automatically cleaned each month or when Java version changes
+- `jfr` folder (JFR benchmark files) - Cached monthly per Java version. The `create_jfr` step only runs when:
+  - Starting a new month (cache expires)
+  - Java version changes (from `java -version` output)
+  - Cache is manually cleared or rebuild-all mode is selected
+
+This significantly speeds up builds by avoiding the time-consuming JFR file generation on every run.
+
+**Required GitHub Secrets:**
+- `MAVEN_USERNAME` - Maven Central (OSSRH) username
+- `MAVEN_PASSWORD` - Maven Central (OSSRH) password/token
+- `GPG_PRIVATE_KEY` - GPG private key for signing artifacts (export with `gpg --export-secret-keys --armor KEY_ID`)
+- `GPG_KEYNAME` - GPG key ID
+- `GPG_PASSPHRASE` - GPG key passphrase
+
+Use the [`bin/update_gh_secrets.sh`](bin/update_gh_secrets.sh) script to automatically update GitHub secrets from your local Maven configuration
+using the [GitHub CLI](https://cli.github.com/).
+
 ## Publishing of the website
 
 The website is built using the [website generator](./website) and is updated
@@ -237,7 +270,7 @@ Please do not create GitHub issues for security-related doubts or problems.
 
 ## Code of Conduct
 
-We as members, contributors, and leaders pledge to make participation in our community
+We, as members, contributors, and leaders, pledge to make participation in our community
 a harassment-free experience for everyone. By participating in this project,
 you agree to abide by its [Code of Conduct](https://github.com/SAP/.github/blob/main/CODE_OF_CONDUCT.md) at all times.
 
@@ -245,5 +278,5 @@ License
 -------
 Copyright 2023 - 2025  SAP SE or an SAP affiliate company and contributors.
 Please see our LICENSE for copyright and license information.
-Detailed information including third-party components and their
-licensing/copyright information is available via the REUSE tool.
+Detailed information, including third-party components and their
+licensing/copyright information, is available via the REUSE tool.

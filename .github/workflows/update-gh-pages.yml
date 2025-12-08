@@ -1,9 +1,6 @@
 name: Update GitHub Pages
 
 on:
-  # Run daily at 2 AM UTC
-  schedule:
-    - cron: '0 2 * * *'
   push:
     branches:
       - main

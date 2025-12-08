@@ -1,0 +1,512 @@
+name: Build and Deploy to Maven Central
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '0 0 * * 0'  # Run every Sunday at midnight UTC
+  workflow_dispatch:
+    inputs:
+      cache_mode:
+        description: |
+          Cache Strategy:
+          • normal = Use all caches (fastest, recommended)
+          • rebuild-jfr = Re-run JFR benchmarks, keep JDK downloads
+          • rebuild-all = Fresh start, re-download everything
+        required: false
+        default: 'normal'
+        type: choice
+        options:
+          - normal
+          - rebuild-jfr
+          - rebuild-all
+
+# Prevent concurrent deployments to avoid conflicts
+concurrency:
+  group: maven-deployment
+  cancel-in-progress: false
+
+env:
+  JAVA_VERSION: '25'
+
+jobs:
+  # Job 1: Build and test
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      version: ${{ steps.extract-version.outputs.version }}
+      cache-mode: ${{ steps.determine-cache-mode.outputs.mode }}
+      java-version: ${{ env.JAVA_VERSION }}
+
+    steps:
+      - name: Validate required secrets
+        run: |
+          echo "Validating required secrets are configured..."
+          MISSING_SECRETS=""
+          
+          if [ -z "${{ secrets.MAVEN_USERNAME }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}MAVEN_USERNAME "
+          fi
+          if [ -z "${{ secrets.MAVEN_PASSWORD }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}MAVEN_PASSWORD "
+          fi
+          if [ -z "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}GPG_PRIVATE_KEY "
+          fi
+          if [ -z "${{ secrets.GPG_KEYNAME }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}GPG_KEYNAME "
+          fi
+          if [ -z "${{ secrets.GPG_PASSPHRASE }}" ]; then
+            MISSING_SECRETS="${MISSING_SECRETS}GPG_PASSPHRASE "
+          fi
+          
+          if [ -n "$MISSING_SECRETS" ]; then
+            echo "❌ ERROR: Missing required secrets: $MISSING_SECRETS"
+            echo "Please configure these secrets in repository settings"
+            exit 1
+          fi
+          
+          echo "✅ All required secrets are configured"
+
+      - name: Determine cache mode
+        id: determine-cache-mode
+        run: |
+          # Fix null cache_mode for non-manual triggers
+          CACHE_MODE="${{ github.event.inputs.cache_mode }}"
+          if [ -z "$CACHE_MODE" ]; then
+            CACHE_MODE="normal"
+          fi
+          echo "mode=$CACHE_MODE" >> $GITHUB_OUTPUT
+          echo "Cache mode: $CACHE_MODE"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'sapmachine'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Get current month for cache key
+        id: cache-month
+        run: |
+          CURRENT_MONTH=$(date +'%Y-%m')
+          LAST_MONTH=$(date -d '1 month ago' +'%Y-%m' 2>/dev/null || date -v-1m +'%Y-%m')
+          echo "month=$CURRENT_MONTH" >> $GITHUB_OUTPUT
+          echo "last-month=$LAST_MONTH" >> $GITHUB_OUTPUT
+          echo "Current month: $CURRENT_MONTH"
+          echo "Last month: $LAST_MONTH"
+
+      - name: Get Java version for cache key
+        id: java-version
+        run: |
+          JAVA_VER=$(java -version 2>&1 | head -n 1 | awk -F '"' '{print $2}')
+          echo "version=$JAVA_VER" >> $GITHUB_OUTPUT
+          echo "Java version: $JAVA_VER"
+
+      - name: Restore .cache folder
+        if: ${{ steps.determine-cache-mode.outputs.mode != 'rebuild-all' }}
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: jfr-cache-${{ steps.cache-month.outputs.month }}-java${{ steps.java-version.outputs.version }}
+          restore-keys: |
+            jfr-cache-${{ steps.cache-month.outputs.month }}-
+            jfr-cache-${{ steps.cache-month.outputs.last-month }}-
+
+      - name: Restore jfr folder
+        id: jfr-cache
+        if: ${{ steps.determine-cache-mode.outputs.mode == 'normal' }}
+        uses: actions/cache@v4
+        with:
+          path: jfr
+          key: jfr-files-${{ steps.cache-month.outputs.month }}-java${{ steps.java-version.outputs.version }}
+          restore-keys: |
+            jfr-files-${{ steps.cache-month.outputs.month }}-
+            jfr-files-${{ steps.cache-month.outputs.last-month }}-
+
+      - name: Cache Maven dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-deps-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}
+          restore-keys: |
+            maven-deps-
+
+      - name: Clean local me.bechberger artifacts
+        run: |
+          # Remove our own artifacts from cache to ensure fresh builds
+          rm -rf ~/.m2/repository/me/bechberger/ || true
+          echo "✅ Cleaned local me.bechberger artifacts from Maven cache"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Import and validate GPG key
+        run: |
+          set -e
+          echo "Importing GPG private key..."
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          
+          echo "Validating GPG key import..."
+          if ! gpg --list-secret-keys --keyid-format LONG | grep -q "${{ secrets.GPG_KEYNAME }}"; then
+            echo "❌ ERROR: GPG key ${{ secrets.GPG_KEYNAME }} not found after import"
+            echo "Available keys:"
+            gpg --list-secret-keys --keyid-format LONG
+            exit 1
+          fi
+          
+          echo "✅ GPG key successfully imported and validated"
+          gpg --list-secret-keys --keyid-format LONG "${{ secrets.GPG_KEYNAME }}"
+
+      - name: Create Maven settings.xml
+        run: |
+          set -e
+          echo "Creating Maven settings.xml..."
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>ossrh</id>
+                <username>\${{ secrets.MAVEN_USERNAME }}</username>
+                <password>\${{ secrets.MAVEN_PASSWORD }}</password>
+              </server>
+            </servers>
+            <profiles>
+              <profile>
+                <id>ossrh</id>
+                <activation>
+                  <activeByDefault>true</activeByDefault>
+                </activation>
+                <properties>
+                  <gpg.executable>gpg</gpg.executable>
+                  <gpg.keyname>\${{ secrets.GPG_KEYNAME }}</gpg.keyname>
+                  <gpg.passphrase>\${{ secrets.GPG_PASSPHRASE }}</gpg.passphrase>
+                </properties>
+              </profile>
+            </profiles>
+          </settings>
+          'EOF'
+
+          echo "Validating Maven settings.xml..."
+          if [ ! -f ~/.m2/settings.xml ]; then
+            echo "❌ ERROR: Maven settings.xml was not created"
+            exit 1
+          fi
+
+          echo "✅ Maven settings.xml created successfully"
+
+      - name: Download JDK sources
+        timeout-minutes: 20
+        run: |
+          set -e
+          set -o pipefail
+          
+          chmod +x bin/releaser.py
+          
+          CACHE_MODE="${{ steps.determine-cache-mode.outputs.mode }}"
+          echo "========================================="
+          echo "Downloading JDK sources..."
+          echo "Cache mode: $CACHE_MODE"
+          echo "========================================="
+          
+          bin/releaser.py download
+          
+          echo "✅ JDK sources downloaded successfully"
+
+      - name: Create JFR benchmarks
+        timeout-minutes: 30
+        if: steps.determine-cache-mode.outputs.mode == 'rebuild-jfr' || steps.determine-cache-mode.outputs.mode == 'rebuild-all' || steps.jfr-cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          set -o pipefail
+          
+          CACHE_MODE="${{ steps.determine-cache-mode.outputs.mode }}"
+          JFR_CACHE_HIT="${{ steps.jfr-cache.outputs.cache-hit }}"
+          
+          echo "========================================="
+          echo "Creating JFR benchmarks..."
+          echo "Cache mode: $CACHE_MODE"
+          echo "JFR cache hit: $JFR_CACHE_HIT"
+          
+          if [ "$CACHE_MODE" == "rebuild-jfr" ] || [ "$CACHE_MODE" == "rebuild-all" ]; then
+            echo "🔄 Rebuild mode - forcing create_jfr"
+          else
+            echo "🔄 JFR cache miss - running create_jfr"
+          fi
+          echo "========================================="
+          
+          bin/releaser.py create_jfr
+          
+          echo "✅ JFR benchmarks created successfully"
+
+      - name: Build artifacts
+        timeout-minutes: 20
+        env:
+          # Pass credentials as environment variables (never written to disk)
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          GPG_KEYNAME: ${{ secrets.GPG_KEYNAME }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -e
+          set -o pipefail
+          
+          echo "========================================="
+          echo "Building artifacts..."
+          echo "========================================="
+          
+          bin/releaser.py build_parser build_versions build
+          
+          echo "========================================="
+          echo "✅ Build completed successfully"
+          echo "========================================="
+
+      - name: Extract version
+        id: extract-version
+        run: |
+          VERSION=$(grep -m 1 '<version>' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/' | tr -d '[:space:]')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Extracted version: $VERSION"
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfr-artifacts-${{ steps.extract-version.outputs.version }}
+          path: |
+            target/*.jar
+            target/*.xml
+          retention-days: 7
+
+  # Job 2: Deploy to Maven Central
+  deploy-maven:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'sapmachine'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: jfr-artifacts-${{ needs.build.outputs.version }}
+          path: target/
+
+      - name: Import GPG key
+        run: |
+          echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format LONG "${{ secrets.GPG_KEYNAME }}"
+
+      - name: Configure GPG for Maven
+        run: |
+          echo "allow-preset-passphrase" >> ~/.gnupg/gpg-agent.conf
+          gpgconf --kill gpg-agent
+          gpgconf --launch gpg-agent
+
+      - name: Create minimal Maven settings (using env vars)
+        run: |
+          # Create settings.xml that references environment variables
+          # No secrets are written to disk - they're read from environment at runtime
+          mkdir -p ~/.m2
+          cat > ~/.m2/settings.xml <<'EOF'
+          <settings>
+            <servers>
+              <server>
+                <id>ossrh</id>
+                <username>${env.MAVEN_USERNAME}</username>
+                <password>${env.MAVEN_PASSWORD}</password>
+              </server>
+            </servers>
+            <profiles>
+              <profile>
+                <id>gpg</id>
+                <activation>
+                  <activeByDefault>true</activeByDefault>
+                </activation>
+                <properties>
+                  <gpg.executable>gpg</gpg.executable>
+                  <gpg.keyname>${env.GPG_KEYNAME}</gpg.keyname>
+                  <gpg.passphrase>${env.GPG_PASSPHRASE}</gpg.passphrase>
+                </properties>
+              </profile>
+            </profiles>
+          </settings>
+          EOF
+          echo "✅ Maven settings.xml created (references env vars, no secrets on disk)"
+
+      - name: Deploy to Maven Central
+        env:
+          # Pass credentials as environment variables
+          MAVEN_USERNAME: ${{ secrets.MAVEN_USERNAME }}
+          MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
+          GPG_KEYNAME: ${{ secrets.GPG_KEYNAME }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -e
+          chmod +x bin/releaser.py
+          echo "Deploying to Maven Central..."
+          bin/releaser.py deploy_mvn
+          echo "✅ Deployment completed"
+
+  # Job 3: Verify deployment
+  verify-deployment:
+    needs: [build, deploy-maven]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Verify Maven Central deployment
+        run: |
+          set -e
+          echo "========================================="
+          echo "Verifying deployment to Maven Central..."
+          echo "========================================="
+          
+          VERSION="${{ needs.build.outputs.version }}"
+          echo "Checking for version: $VERSION"
+          
+          # Wait for Maven Central sync
+          echo "Waiting 30 seconds for Maven Central sync..."
+          sleep 30
+          
+          # Check for jfreventcollector artifact
+          COLLECTOR_URL="https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/jfreventcollector/${VERSION}/"
+          echo "Checking: $COLLECTOR_URL"
+          
+          if curl --head --fail --silent "$COLLECTOR_URL" > /dev/null 2>&1; then
+            echo "✅ jfreventcollector artifact found"
+          else
+            echo "⚠️ WARNING: jfreventcollector artifact not yet visible at $COLLECTOR_URL"
+            echo "This may be normal - Maven Central can take a few minutes to index"
+          fi
+          
+          # Check for jfreventcollection artifact
+          COLLECTION_URL="https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/jfreventcollection/${VERSION}/"
+          echo "Checking: $COLLECTION_URL"
+          
+          if curl --head --fail --silent "$COLLECTION_URL" > /dev/null 2>&1; then
+            echo "✅ jfreventcollection artifact found"
+          else
+            echo "⚠️ WARNING: jfreventcollection artifact not yet visible at $COLLECTION_URL"
+            echo "This may be normal - Maven Central can take a few minutes to index"
+          fi
+          
+          echo "========================================="
+          echo "✅ Deployment verification completed"
+          echo "========================================="
+          echo ""
+          echo "📦 Artifacts should be available at:"
+          echo "  - $COLLECTOR_URL"
+          echo "  - $COLLECTION_URL"
+
+  # Job 4: Update website
+  update-website:
+    needs: [build, verify-deployment]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger website update
+        run: |
+          echo "Triggering website update workflow..."
+          gh workflow run update-gh-pages.yml \
+            --repo ${{ github.repository }} \
+            --ref main
+          echo "✅ Website update workflow triggered"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Job 5: Notify on completion
+  notify:
+    needs: [build, deploy-maven, verify-deployment, update-website]
+    runs-on: ubuntu-latest
+    if: always()
+
+    steps:
+      - name: Create workflow summary
+        run: |
+          echo "# Workflow Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Cache Mode**: ${{ needs.build.outputs.cache-mode || 'normal (auto)' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: \`${{ needs.build.outputs.version }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Job Status" >> $GITHUB_STEP_SUMMARY
+          echo "- **Build**: ${{ needs.build.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Deploy**: ${{ needs.deploy-maven.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Verify**: ${{ needs.verify-deployment.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Website**: ${{ needs.update-website.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Overall status
+          if [ "${{ needs.build.result }}" == "success" ] && \
+             [ "${{ needs.deploy-maven.result }}" == "success" ] && \
+             [ "${{ needs.verify-deployment.result }}" == "success" ]; then
+            echo "## ✅ Deployment Successful" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Deployment Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Check the failed jobs above for details." >> $GITHUB_STEP_SUMMARY
+          fi
+          
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Deployed Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "- [jfreventcollector](https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/jfreventcollector/${{ needs.build.outputs.version }}/)" >> $GITHUB_STEP_SUMMARY
+          echo "- [jfreventcollection](https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/jfreventcollection/${{ needs.build.outputs.version }}/)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "## Resources" >> $GITHUB_STEP_SUMMARY
+          echo "- [Maven Central Snapshots](https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/)" >> $GITHUB_STEP_SUMMARY
+          echo "- [Website](https://sap.github.io/jfrevents/)" >> $GITHUB_STEP_SUMMARY
+
+      - name: Report success
+        if: needs.build.result == 'success' && needs.deploy-maven.result == 'success' && needs.verify-deployment.result == 'success'
+        run: |
+          echo "========================================="
+          echo "✅ DEPLOYMENT SUCCESSFUL"
+          echo "========================================="
+          echo "Version: ${{ needs.build.outputs.version }}"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "========================================="
+
+      - name: Report failure
+        if: needs.build.result != 'success' || needs.deploy-maven.result != 'success' || needs.verify-deployment.result != 'success'
+        run: |
+          echo "========================================="
+          echo "❌ DEPLOYMENT FAILED"
+          echo "========================================="
+          echo "Build: ${{ needs.build.result }}"
+          echo "Deploy: ${{ needs.deploy-maven.result }}"
+          echo "Verify: ${{ needs.verify-deployment.result }}"
+          echo "Website: ${{ needs.update-website.result }}"
+          echo "========================================="
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "Trigger: ${{ github.event_name }}"
+          echo "Ref: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
+          echo "========================================="
+          exit 1
