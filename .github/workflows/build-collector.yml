@@ -120,45 +120,74 @@ jobs:
           echo "version=$JAVA_VER" >> $GITHUB_OUTPUT
           echo "Java version: $JAVA_VER"
 
-      - name: Restore jfr folder
-        id: jfr-cache
-        if: ${{ steps.determine-cache-mode.outputs.mode == 'normal' }}
-        uses: actions/cache@v4
-        with:
-          path: jfr
-          key: jfr-files-${{ steps.cache-month.outputs.month }}-java${{ steps.java-version.outputs.version }}
-          restore-keys: |
-            jfr-files-${{ steps.cache-month.outputs.month }}-
-            jfr-files-${{ steps.cache-month.outputs.last-month }}-
-
-      - name: Check if JFR creation needed
-        id: check-jfr-needed
-        run: |
-          if [ "${{ steps.determine-cache-mode.outputs.mode }}" == "rebuild-jfr" ] || \
-             [ "${{ steps.determine-cache-mode.outputs.mode }}" == "rebuild-all" ] || \
-             [ "${{ steps.jfr-cache.outputs.cache-hit }}" != "true" ]; then
-            echo "needed=true" >> $GITHUB_OUTPUT
-            echo "✅ JFR creation needed"
-          else
-            echo "needed=false" >> $GITHUB_OUTPUT
-            echo "⏭️ JFR creation not needed (cache hit)"
-          fi
-
       - name: Get GC options
         id: gc-options
-        if: steps.check-jfr-needed.outputs.needed == 'true'
         run: |
           chmod +x bin/releaser.py
           GC_OPTIONS=$(bin/releaser.py list_gc_options)
           echo "options=$GC_OPTIONS" >> $GITHUB_OUTPUT
           echo "Available GC options: $GC_OPTIONS"
 
+      - name: Check cached JFR files per GC
+        id: check-gc-cache
+        if: ${{ steps.determine-cache-mode.outputs.mode == 'normal' }}
+        run: |
+          GC_OPTIONS="${{ steps.gc-options.outputs.options }}"
+          CACHE_MONTH="${{ steps.cache-month.outputs.month }}"
+          LAST_MONTH="${{ steps.cache-month.outputs.last-month }}"
+          JAVA_VER="${{ steps.java-version.outputs.version }}"
+          
+          echo "Checking per-GC cache status..."
+          MISSING_GCS=""
+          
+          for gc in $GC_OPTIONS; do
+            echo "Checking cache for $gc..."
+            # Note: We'll actually restore these in the parallel job
+            # Here we just track which ones might be missing
+            MISSING_GCS="$MISSING_GCS $gc"
+          done
+          
+          # For now, we'll let the parallel job handle individual cache checks
+          echo "gc-list=$GC_OPTIONS" >> $GITHUB_OUTPUT
+          echo "Per-GC cache checking complete"
+
+      - name: Determine GCs to build
+        id: gcs-to-build
+        run: |
+          CACHE_MODE="${{ steps.determine-cache-mode.outputs.mode }}"
+          GC_OPTIONS="${{ steps.gc-options.outputs.options }}"
+          
+          if [ "$CACHE_MODE" == "rebuild-jfr" ] || [ "$CACHE_MODE" == "rebuild-all" ]; then
+            echo "Rebuild mode - all GCs need to be built"
+            echo "gcs=$GC_OPTIONS" >> $GITHUB_OUTPUT
+            echo "needed=true" >> $GITHUB_OUTPUT
+          elif [ "$CACHE_MODE" == "normal" ]; then
+            # In normal mode, we'll check individual caches in parallel job
+            echo "Normal mode - checking individual GC caches in parallel jobs"
+            echo "gcs=$GC_OPTIONS" >> $GITHUB_OUTPUT
+            echo "needed=true" >> $GITHUB_OUTPUT
+          else
+            echo "gcs=$GC_OPTIONS" >> $GITHUB_OUTPUT
+            echo "needed=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check if JFR creation needed
+        id: check-jfr-needed
+        run: |
+          if [ "${{ steps.gcs-to-build.outputs.needed }}" == "true" ]; then
+            echo "needed=true" >> $GITHUB_OUTPUT
+            echo "✅ JFR creation needed"
+          else
+            echo "needed=false" >> $GITHUB_OUTPUT
+            echo "⏭️ JFR creation not needed (all caches hit)"
+          fi
+
       - name: Create GC matrix
         id: gc-matrix
         if: steps.check-jfr-needed.outputs.needed == 'true'
         run: |
           # Convert space-separated list to JSON array for matrix (compact format)
-          GC_OPTIONS="${{ steps.gc-options.outputs.options }}"
+          GC_OPTIONS="${{ steps.gcs-to-build.outputs.gcs }}"
           JSON_ARRAY=$(echo $GC_OPTIONS | jq -R -c 'split(" ")')
           echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
           echo "Matrix: $JSON_ARRAY"
@@ -178,14 +207,6 @@ jobs:
           path: |
             .cache/jfc.jfc
             .cache/renaissance.jar
-          retention-days: 1
-
-      - name: Upload cached JFR files
-        if: steps.jfr-cache.outputs.cache-hit == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: jfr-files
-          path: jfr/
           retention-days: 1
 
   # Job 2: Create JFR files in parallel
@@ -214,13 +235,36 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Get cache key info
+        id: cache-info
+        run: |
+          JAVA_VER=$(java -version 2>&1 | head -n 1 | awk -F '"' '{print $2}')
+          CURRENT_MONTH=$(date +'%Y-%m')
+          LAST_MONTH=$(date -d '1 month ago' +'%Y-%m' 2>/dev/null || date -v-1m +'%Y-%m')
+          echo "java-version=$JAVA_VER" >> $GITHUB_OUTPUT
+          echo "month=$CURRENT_MONTH" >> $GITHUB_OUTPUT
+          echo "last-month=$LAST_MONTH" >> $GITHUB_OUTPUT
+
+      - name: Restore cached JFR for ${{ matrix.gc }}
+        id: jfr-cache
+        if: needs.prepare-jfr.outputs.cache-mode == 'normal'
+        uses: actions/cache@v4
+        with:
+          path: jfr/sample_${{ matrix.gc }}.jfr
+          key: jfr-${{ matrix.gc }}-${{ steps.cache-info.outputs.month }}-java${{ steps.cache-info.outputs.java-version }}
+          restore-keys: |
+            jfr-${{ matrix.gc }}-${{ steps.cache-info.outputs.month }}-
+            jfr-${{ matrix.gc }}-${{ steps.cache-info.outputs.last-month }}-
+
       - name: Download JFC configuration
+        if: steps.jfr-cache.outputs.cache-hit != 'true'
         uses: actions/download-artifact@v4
         with:
           name: jfc-config
           path: .cache/
 
       - name: Create JFR for ${{ matrix.gc }}
+        if: steps.jfr-cache.outputs.cache-hit != 'true'
         env:
           GC: ${{ matrix.gc }}
         run: |
@@ -231,6 +275,14 @@ jobs:
           echo "========================================="
           bin/releaser.py create_jfr
           echo "✅ JFR file created for ${{ matrix.gc }}"
+
+      - name: Report cache hit
+        if: steps.jfr-cache.outputs.cache-hit == 'true'
+        run: |
+          echo "========================================="
+          echo "✅ Cache hit for ${{ matrix.gc }}"
+          echo "Skipping JFR creation"
+          echo "========================================="
 
       - name: Upload JFR file
         uses: actions/upload-artifact@v4
@@ -313,17 +365,10 @@ jobs:
           path: jfr-artifacts/
           merge-multiple: false
 
-      - name: Download cached JFR files
-        if: needs.prepare-jfr.outputs.should-create-jfr != 'true'
-        uses: actions/download-artifact@v4
-        with:
-          name: jfr-files
-          path: jfr/
-
       - name: Consolidate JFR files
         if: needs.prepare-jfr.outputs.should-create-jfr == 'true'
         run: |
-          echo "Consolidating JFR files from parallel jobs..."
+          echo "Consolidating JFR files from parallel jobs (cached and newly created)..."
           mkdir -p jfr
           # Move all JFR files from individual artifacts to jfr folder
           find jfr-artifacts -name "*.jfr" -exec mv {} jfr/ \;
