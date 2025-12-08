@@ -194,6 +194,8 @@ jobs:
 
       - name: Build JFC configuration
         if: steps.check-jfr-needed.outputs.needed == 'true'
+        env:
+          LOG: "true"  # Enable verbose logging for better error diagnostics
         run: |
           echo "Building JFC configuration file (prevents concurrent generation issues)..."
           bin/releaser.py build_jfc
@@ -267,13 +269,22 @@ jobs:
         if: steps.jfr-cache.outputs.cache-hit != 'true'
         env:
           GC: ${{ matrix.gc }}
+          LOG: "true"  # Enable verbose logging for better error diagnostics
         run: |
           set -e
           chmod +x bin/releaser.py
           echo "========================================="
           echo "Creating JFR for GC: ${{ matrix.gc }}"
           echo "========================================="
-          bin/releaser.py create_jfr
+          bin/releaser.py create_jfr 2>&1 | tee create_jfr_${{ matrix.gc }}.log
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ JFR creation failed for ${{ matrix.gc }}!"
+            echo "Last 50 lines of output:"
+            tail -n 50 create_jfr_${{ matrix.gc }}.log
+            exit 1
+          fi
+          
           echo "✅ JFR file created for ${{ matrix.gc }}"
 
       - name: Report cache hit
@@ -283,6 +294,15 @@ jobs:
           echo "✅ Cache hit for ${{ matrix.gc }}"
           echo "Skipping JFR creation"
           echo "========================================="
+
+      - name: Upload JFR creation log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jfr-creation-log-${{ matrix.gc }}-${{ github.run_number }}
+          path: create_jfr_${{ matrix.gc }}.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload JFR file
         uses: actions/upload-artifact@v4
@@ -450,6 +470,8 @@ jobs:
 
       - name: Download JDK sources
         timeout-minutes: 20
+        env:
+          LOG: "true"  # Enable verbose logging for better error diagnostics
         run: |
           set -e
           set -o pipefail
@@ -457,7 +479,7 @@ jobs:
           echo "========================================="
           echo "Downloading JDK sources..."
           echo "========================================="
-          bin/releaser.py download
+          bin/releaser.py download 2>&1 | tee download.log
           echo "✅ JDK sources downloaded successfully"
 
 
@@ -469,6 +491,7 @@ jobs:
           MAVEN_PASSWORD: ${{ secrets.MAVEN_PASSWORD }}
           GPG_KEYNAME: ${{ secrets.GPG_KEYNAME }}
           GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+          LOG: "true"  # Enable verbose logging for better error diagnostics
         run: |
           set -e
           set -o pipefail
@@ -477,7 +500,44 @@ jobs:
           echo "Building artifacts..."
           echo "========================================="
           
-          bin/releaser.py build_parser build_versions build
+          # Log environment info for debugging
+          echo "Maven version:"
+          mvn --version
+          echo ""
+          echo "Disk space:"
+          df -h
+          echo ""
+          echo "Memory:"
+          free -h || true
+          echo ""
+          
+          # Build with verbose output
+          bin/releaser.py build_parser 2>&1 | tee build_parser.log
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ build_parser failed!"
+            echo "Last 100 lines of output:"
+            tail -n 100 build_parser.log
+            exit 1
+          fi
+          
+          bin/releaser.py build_versions 2>&1 | tee build_versions.log
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ build_versions failed!"
+            echo "Last 100 lines of output:"
+            tail -n 100 build_versions.log
+            exit 1
+          fi
+          
+          bin/releaser.py build 2>&1 | tee build.log
+          
+          if [ $? -ne 0 ]; then
+            echo "❌ build failed!"
+            echo "Last 100 lines of output:"
+            tail -n 100 build.log
+            exit 1
+          fi
           
           echo "========================================="
           echo "✅ Build completed successfully"
@@ -489,6 +549,19 @@ jobs:
           VERSION=$(grep -m 1 '<version>' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/' | tr -d '[:space:]')
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
+
+      - name: Upload build logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            download.log
+            build_parser.log
+            build_versions.log
+            build.log
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

@@ -100,9 +100,23 @@ def get_github_token() -> Optional[str]:
 
 def execute(args: Union[List[str], str]):
     log(f"Execute: {args}")
-    subprocess.check_call(args, cwd=CURRENT_DIR, shell=isinstance(args, str),
-                          stdout=sys.stdout if LOG else subprocess.DEVNULL,
-                          stderr=sys.stderr if LOG else subprocess.DEVNULL)
+    try:
+        subprocess.check_call(args, cwd=CURRENT_DIR, shell=isinstance(args, str),
+                              stdout=sys.stdout if LOG else subprocess.DEVNULL,
+                              stderr=sys.stderr if LOG else subprocess.DEVNULL)
+    except subprocess.CalledProcessError as e:
+        # If LOG is disabled and command failed, re-run with output to show error details
+        if not LOG:
+            print(f"Command failed: {args}", file=sys.stderr)
+            print(f"Re-running with verbose output to show error details...", file=sys.stderr)
+            print("=" * 80, file=sys.stderr)
+            try:
+                subprocess.check_call(args, cwd=CURRENT_DIR, shell=isinstance(args, str),
+                                      stdout=sys.stdout, stderr=sys.stderr)
+            except subprocess.CalledProcessError:
+                pass  # We expect it to fail again, but now we have output
+            print("=" * 80, file=sys.stderr)
+        raise
 
 
 def download_file(url, path: str, retention: int = CACHE_TIME) -> str:
