@@ -379,18 +379,37 @@ jobs:
             jfr-cache-${{ steps.cache-month.outputs.month }}-
             jfr-cache-${{ steps.cache-month.outputs.last-month }}-
 
-      - name: Cache Maven dependencies
+      - name: Cache Maven dependencies (excluding local artifacts)
         uses: actions/cache@v4
         with:
-          path: ~/.m2/repository
-          key: maven-deps-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}
+          path: |
+            ~/.m2/repository/*
+            !~/.m2/repository/me/bechberger
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-v2
           restore-keys: |
-            maven-deps-
+            maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-
+            maven-${{ runner.os }}-
+          enableCrossOsArchive: false
 
-      - name: Clean local me.bechberger artifacts
+      - name: Verify Maven cache
         run: |
-          rm -rf ~/.m2/repository/me/bechberger/ || true
-          echo "✅ Cleaned local me.bechberger artifacts from Maven cache"
+          if [ -d ~/.m2/repository ]; then
+            echo "✅ Maven cache restored"
+            du -sh ~/.m2/repository || true
+          else
+            echo "⚠️ Maven cache not found, will download dependencies"
+          fi
+
+      - name: Pre-fetch Maven dependencies
+        continue-on-error: true
+        run: |
+          echo "Pre-fetching Maven dependencies in parallel..."
+          # Download dependencies for all modules without building
+          # This populates the cache faster by using parallel downloads
+          mvn dependency:go-offline -T 1C -B -q 2>/dev/null || \
+          mvn dependency:resolve -T 1C -B -q 2>/dev/null || \
+          echo "⚠️ Dependency pre-fetch had some issues, continuing with build..."
+          echo "✅ Maven dependency pre-fetch completed"
 
       - name: Download JFR files from parallel jobs
         if: needs.prepare-jfr.outputs.should-create-jfr == 'true'
@@ -461,12 +480,60 @@ jobs:
                   <gpg.executable>gpg</gpg.executable>
                   <gpg.keyname>${env.GPG_KEYNAME}</gpg.keyname>
                   <gpg.passphrase>${env.GPG_PASSPHRASE}</gpg.passphrase>
+                  <!-- Performance optimizations -->
+                  <maven.artifact.threads>8</maven.artifact.threads>
+                  <maven.resolver.transport>wagon</maven.resolver.transport>
                 </properties>
               </profile>
             </profiles>
           </settings>
           EOF
           echo "✅ Maven settings.xml created (references env vars, no secrets on disk)"
+
+      - name: Free up disk space before JDK download
+        run: |
+          echo "========================================="
+          echo "Freeing up disk space before downloading JDK sources..."
+          echo "========================================="
+          
+          echo "Disk space before cleanup:"
+          df -h
+          
+          # Remove unnecessary software to free up ~30GB
+          # Based on https://github.com/jlumbroso/free-disk-space
+          
+          echo "Removing Android SDK..."
+          sudo rm -rf /usr/local/lib/android || true
+          
+          echo "Removing .NET runtime..."
+          sudo rm -rf /usr/share/dotnet || true
+          
+          echo "Removing Haskell..."
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          
+          echo "Removing large packages..."
+          sudo apt-get remove -y '^aspnetcore-.*' || true
+          sudo apt-get remove -y '^dotnet-.*' --fix-missing || true
+          sudo apt-get remove -y '^llvm-.*' --fix-missing || true
+          sudo apt-get remove -y 'php.*' --fix-missing || true
+          sudo apt-get remove -y '^mongodb-.*' --fix-missing || true
+          sudo apt-get remove -y '^mysql-.*' --fix-missing || true
+          sudo apt-get remove -y azure-cli google-chrome-stable firefox powershell mono-devel libgl1-mesa-dri --fix-missing || true
+          sudo apt-get autoremove -y || true
+          sudo apt-get clean || true
+          
+          echo "Removing Docker images..."
+          docker rmi $(docker image ls -aq) || true
+          
+          echo "Removing swap file..."
+          sudo swapoff -a || true
+          sudo rm -f /mnt/swapfile || true
+          
+          echo "========================================="
+          echo "Disk space after cleanup:"
+          df -h
+          echo "========================================="
 
       - name: Download JDK sources
         timeout-minutes: 20
@@ -572,6 +639,31 @@ jobs:
             target/*.xml
           retention-days: 7
 
+      - name: Report cache statistics
+        if: always()
+        run: |
+          echo "========================================="
+          echo "Cache Statistics"
+          echo "========================================="
+          if [ -d ~/.m2/repository ]; then
+            echo "Maven repository size:"
+            du -sh ~/.m2/repository
+            echo ""
+            echo "Top 10 largest dependencies:"
+            du -sh ~/.m2/repository/*/* 2>/dev/null | sort -hr | head -n 10 || echo "Unable to list dependencies"
+          else
+            echo "Maven repository not found"
+          fi
+          echo ""
+          if [ -d .cache ]; then
+            echo ".cache folder size:"
+            du -sh .cache
+            ls -lh .cache/ 2>/dev/null || true
+          else
+            echo ".cache folder not found"
+          fi
+          echo "========================================="
+
   # Job 2: Deploy to Maven Central
   deploy-maven:
     needs: build
@@ -588,6 +680,18 @@ jobs:
         with:
           distribution: 'sapmachine'
           java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Cache Maven dependencies (excluding local artifacts)
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.m2/repository/*
+            !~/.m2/repository/me/bechberger
+          key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-v2
+          restore-keys: |
+            maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-
+            maven-${{ runner.os }}-
+          enableCrossOsArchive: false
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -630,6 +734,9 @@ jobs:
                   <gpg.executable>gpg</gpg.executable>
                   <gpg.keyname>${env.GPG_KEYNAME}</gpg.keyname>
                   <gpg.passphrase>${env.GPG_PASSPHRASE}</gpg.passphrase>
+                  <!-- Performance optimizations -->
+                  <maven.artifact.threads>8</maven.artifact.threads>
+                  <maven.resolver.transport>wagon</maven.resolver.transport>
                 </properties>
               </profile>
             </profiles>
