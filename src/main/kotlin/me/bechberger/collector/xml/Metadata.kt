@@ -144,7 +144,7 @@ class Metadata {
 
     fun read(path: Path) = path.readXmlAs(Metadata::class.java)
 
-    fun String.normalizeName() = this.split(".").last().toLowerCase()
+    fun String.normalizeName() = this.split(".").last().lowercase()
 
     @get:JsonIgnore
     private val typesCache: MutableMap<String, AbstractType<Example>> by lazy {
