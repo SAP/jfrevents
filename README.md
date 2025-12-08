@@ -183,7 +183,9 @@ Commands:
     download_urls     print the latest source code download URLs for every JDK version
     download          download the latest source code for every JDK version
     build_parser      build the parser JAR
-    create_jfr        create the JFR file for every available GC
+    list_gc_options   print all available GC options for the current JDK
+    build_jfc         create the JFC configuration file (call once before parallel create_jfr)
+    create_jfr        create the JFR file for every available GC (or single GC if GC env var set)
     build_versions    build the extended metadata file for every available JDK version
     build             build the JAR with the extended metadata files
     deploy_mvn        deploy the JARs to Maven
@@ -201,6 +203,7 @@ by appending "=force" to them, e.g. "all=force".
 
 Environment variables:
     LOG               set to "true" to print more information
+    GC                if set, create_jfr will only create JFR file for this GC option
 ```
 
 ### Snapshots
@@ -224,10 +227,24 @@ When manually triggering the workflow, you can choose from these cache strategie
 
 **Cache Management:**
 - `.cache` folder (downloaded JDK sources, etc.) - Cached monthly per Java version, automatically cleaned each month or when Java version changes
-- `jfr` folder (JFR benchmark files) - Cached monthly per Java version. The `create_jfr` step only runs when:
+- `jfr` folder (JFR benchmark files) - Cached monthly per Java version
+- JFR files are created **concurrently** in parallel jobs for faster builds (~10 minutes vs ~30 minutes sequential)
+- The `create_jfr` step only runs when:
   - Starting a new month (cache expires)
   - Java version changes (from `java -version` output)
-  - Cache is manually cleared or rebuild-all mode is selected
+  - Cache is manually cleared or rebuild-jfr/rebuild-all mode is selected
+
+**Workflow Architecture:**
+The CI/CD pipeline is split into specialized jobs for better performance and fault tolerance:
+1. **prepare-jfr** - Determines cache mode, builds shared JFC configuration
+2. **create-jfr-parallel** - Creates JFR files for each GC option in parallel (UseSerialGC, UseParallelGC, UseG1GC, UseZGC, UseShenandoahGC)
+3. **build** - Consolidates JFR files and builds final artifacts
+4. **deploy-maven** - Deploys to Maven Central (snapshots)
+5. **verify-deployment** - Verifies artifacts are accessible
+6. **update-website** - Triggers website regeneration
+7. **notify** - Creates workflow summary with status and artifact links
+
+This architecture significantly speeds up builds by leveraging GitHub Actions' parallel execution capabilities.
 
 This significantly speeds up builds by avoiding the time-consuming JFR file generation on every run.
 

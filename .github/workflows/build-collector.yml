@@ -155,9 +155,9 @@ jobs:
         id: gc-matrix
         if: steps.check-jfr-needed.outputs.needed == 'true'
         run: |
-          # Convert space-separated list to JSON array for matrix
+          # Convert space-separated list to JSON array for matrix (compact format)
           GC_OPTIONS="${{ steps.gc-options.outputs.options }}"
-          JSON_ARRAY=$(echo $GC_OPTIONS | jq -R 'split(" ")')
+          JSON_ARRAY=$(echo $GC_OPTIONS | jq -R -c 'split(" ")')
           echo "matrix=$JSON_ARRAY" >> $GITHUB_OUTPUT
           echo "Matrix: $JSON_ARRAY"
 
