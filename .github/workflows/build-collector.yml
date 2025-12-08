@@ -33,7 +33,7 @@ env:
   # Java LTS version - update here when new LTS is released
   # Current LTS: 21 (Sep 2023 - Sep 2031)
   # Next LTS: 25 (Sep 2025 - Sep 2033) - coming soon
-  JAVA_VERSION: '21'
+  JAVA_VERSION: '25'
 
 jobs:
   # Job 1: Prepare for JFR creation
