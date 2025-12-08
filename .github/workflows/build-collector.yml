@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'website/**'
   schedule:
     - cron: '0 0 * * 0'  # Run every Sunday at midnight UTC
   workflow_dispatch:
@@ -234,7 +236,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jfr-${{ matrix.gc }}
-          path: jfr/${{ matrix.gc }}.jfr
+          path: jfr/sample_${{ matrix.gc }}.jfr
           retention-days: 1
 
   # Job 3: Build artifacts (combines JFR files and builds)
