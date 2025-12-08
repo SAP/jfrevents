@@ -55,7 +55,7 @@ Environment variables:
 CURRENT_DIR = os.path.abspath(
     os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 
-JAVA_VERSION = "21" # Java version to use for building and running
+MIN_JAVA_VERSION = 21 # minimum Java version to use for building and running
 CACHE_DIR = f"{CURRENT_DIR}/.cache"
 CACHE_TIME = 60 * 60 * 24  # one day
 RENAISSANCE_JAR = f"{CACHE_DIR}/renaissance.jar"
@@ -83,8 +83,8 @@ def get_java_version() -> str:
         f"java -version 2>&1 | head -n 1 | cut -d '\"' -f 2",
         shell=True).decode("utf-8").strip()
 
-assert get_java_version().startswith(JAVA_VERSION), \
-    f"Java version {JAVA_VERSION} is required to run this script, but found {get_java_version()}"
+assert int(get_java_version().split(".")[0]) >= MIN_JAVA_VERSION, \
+    f"Java version >= {MIN_JAVA_VERSION} is required to run this script, but found {get_java_version()}"
 
 def log(msg: str):
     if LOG:
