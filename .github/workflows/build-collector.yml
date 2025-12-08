@@ -382,14 +382,18 @@ jobs:
       - name: Cache Maven dependencies (excluding local artifacts)
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.m2/repository/*
-            !~/.m2/repository/me/bechberger
+          path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-v2
           restore-keys: |
             maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-
             maven-${{ runner.os }}-
           enableCrossOsArchive: false
+
+      - name: Clean local me.bechberger artifacts from cache
+        run: |
+          # Remove project's own artifacts from cache to ensure clean builds
+          rm -rf ~/.m2/repository/me/bechberger/ || true
+          echo "✅ Cleaned local me.bechberger artifacts from Maven cache"
 
       - name: Verify Maven cache
         run: |
@@ -568,7 +572,16 @@ jobs:
       - name: Extract version
         id: extract-version
         run: |
-          VERSION=$(grep -m 1 '<version>' pom.xml | sed 's/.*<version>\(.*\)<\/version>.*/\1/' | tr -d '[:space:]')
+          # Extract version from releaser.py (the source of truth for deployment)
+          # The deploy_maven function uses VERSION constant, not pom.xml version
+          echo "Extracting project version from releaser.py..."
+          VERSION=$(grep -E '^VERSION = ' bin/releaser.py | sed 's/VERSION = "\(.*\)"/\1/')
+          
+          if [ -z "$VERSION" ] || [ "$VERSION" == "-SNAPSHOT" ]; then
+            echo "❌ Failed to extract version from releaser.py"
+            exit 1
+          fi
+          
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
@@ -639,14 +652,18 @@ jobs:
       - name: Cache Maven dependencies (excluding local artifacts)
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.m2/repository/*
-            !~/.m2/repository/me/bechberger
+          path: ~/.m2/repository
           key: maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-v2
           restore-keys: |
             maven-${{ runner.os }}-${{ hashFiles('**/pom.xml', '**/pom_loader.xml') }}-
             maven-${{ runner.os }}-
           enableCrossOsArchive: false
+
+      - name: Clean local me.bechberger artifacts from cache
+        run: |
+          # Remove project's own artifacts from cache to ensure clean builds
+          rm -rf ~/.m2/repository/me/bechberger/ || true
+          echo "✅ Cleaned local me.bechberger artifacts from Maven cache"
 
       - name: Download build artifacts
         uses: actions/download-artifact@v4
@@ -733,36 +750,6 @@ jobs:
           # Wait for Maven Central sync
           echo "Waiting 30 seconds for Maven Central sync..."
           sleep 30
-          
-          # Check for jfreventcollector artifact
-          COLLECTOR_URL="https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/jfreventcollector/${VERSION}/"
-          echo "Checking: $COLLECTOR_URL"
-          
-          if curl --head --fail --silent "$COLLECTOR_URL" > /dev/null 2>&1; then
-            echo "✅ jfreventcollector artifact found"
-          else
-            echo "⚠️ WARNING: jfreventcollector artifact not yet visible at $COLLECTOR_URL"
-            echo "This may be normal - Maven Central can take a few minutes to index"
-          fi
-          
-          # Check for jfreventcollection artifact
-          COLLECTION_URL="https://s01.oss.sonatype.org/content/repositories/snapshots/me/bechberger/jfreventcollection/${VERSION}/"
-          echo "Checking: $COLLECTION_URL"
-          
-          if curl --head --fail --silent "$COLLECTION_URL" > /dev/null 2>&1; then
-            echo "✅ jfreventcollection artifact found"
-          else
-            echo "⚠️ WARNING: jfreventcollection artifact not yet visible at $COLLECTION_URL"
-            echo "This may be normal - Maven Central can take a few minutes to index"
-          fi
-          
-          echo "========================================="
-          echo "✅ Deployment verification completed"
-          echo "========================================="
-          echo ""
-          echo "📦 Artifacts should be available at:"
-          echo "  - $COLLECTOR_URL"
-          echo "  - $COLLECTION_URL"
 
   # Job 4: Update website
   update-website:
