@@ -234,19 +234,6 @@ When manually triggering the workflow, you can choose from these cache strategie
   - Java version changes (from `java -version` output)
   - Cache is manually cleared or rebuild-jfr/rebuild-all mode is selected
 
-**Workflow Architecture:**
-The CI/CD pipeline is split into specialized jobs for better performance and fault tolerance:
-1. **prepare-jfr** - Determines cache mode, builds shared JFC configuration
-2. **create-jfr-parallel** - Creates JFR files for each GC option in parallel (UseSerialGC, UseParallelGC, UseG1GC, UseZGC, UseShenandoahGC)
-3. **build** - Consolidates JFR files and builds final artifacts
-4. **deploy-maven** - Deploys to Maven Central (snapshots)
-5. **verify-deployment** - Verifies artifacts are accessible
-6. **update-website** - Triggers website regeneration
-7. **notify** - Creates workflow summary with status and artifact links
-
-This architecture significantly speeds up builds by leveraging GitHub Actions' parallel execution capabilities.
-
-This significantly speeds up builds by avoiding the time-consuming JFR file generation on every run.
 
 **Required GitHub Secrets:**
 - `MAVEN_USERNAME` - Maven Central (OSSRH) username
