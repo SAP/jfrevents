@@ -588,9 +588,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache
-          key: jfr-cache-java${{ steps.cache-info.outputs.java-version }}-v2
+          key: jfr-cache-${{ steps.cache-info.outputs.month }}-java${{ steps.cache-info.outputs.java-version }}
           restore-keys: |
-            jfr-cache-java${{ steps.cache-info.outputs.java-version }}-
             jfr-cache-
 
       - name: Cache Maven dependencies
