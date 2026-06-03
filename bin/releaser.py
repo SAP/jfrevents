@@ -83,8 +83,9 @@ def get_java_version() -> str:
         f"java -version 2>&1 | head -n 1 | cut -d '\"' -f 2",
         shell=True).decode("utf-8").strip()
 
-assert int(get_java_version().split(".")[0]) >= MIN_JAVA_VERSION, \
-    f"Java version >= {MIN_JAVA_VERSION} is required to run this script, but found {get_java_version()}"
+if "create_jfr_graal" not in sys.argv:
+    assert int(get_java_version().split(".")[0]) >= MIN_JAVA_VERSION, \
+        f"Java version >= {MIN_JAVA_VERSION} is required to run this script, but found {get_java_version()}"
 
 def log(msg: str):
     if LOG:
