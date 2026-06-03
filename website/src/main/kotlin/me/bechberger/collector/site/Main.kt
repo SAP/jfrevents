@@ -247,7 +247,9 @@ class Main(
         // description for search
         val description: String,
         val sectionTitle: String
-    )
+    ) {
+        val nameLower: String get() = name.lowercase()
+    }
 
     data class SectionScope(
         val title: String, val entries: DecoratedCollection<SectionEntryScope>, val jdks: String,
