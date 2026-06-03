@@ -51,3 +51,5 @@ src/main/resources
 bin/.idea/
 site/
 target/
+.cache/
+.playwright-mcp/
