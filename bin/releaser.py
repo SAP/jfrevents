@@ -634,7 +634,7 @@ def add_examples(repo: Repo):
             f"--platform={platform} {label} \"{description}\" {files_arg} {metadata_file}")
 
 
-GRAALVM_SAMPLE_APP_SRC = f"{CURRENT_DIR}/src/main/java/jfr_sample/Main.java"
+GRAALVM_SAMPLE_APP_SRC = f"{CURRENT_DIR}/src/main/java/jfr_sample/NativeMain.java"
 GRAALVM_SAMPLE_APP_OUT = f"{CURRENT_DIR}/.cache/jfr_sample_out"
 GRAALVM_SAMPLE_APP_JAR = f"{CURRENT_DIR}/.cache/jfr_sample_app.jar"
 GRAALVM_SAMPLE_APP_BIN = f"{CURRENT_DIR}/jfr_sample_app"
@@ -653,7 +653,7 @@ def create_jfr_graalvm_native():
     jfr_file = graalvm_jfr_file_name("native")
     os.makedirs(GRAALVM_SAMPLE_APP_OUT, exist_ok=True)
     execute(f"javac -d {GRAALVM_SAMPLE_APP_OUT} {GRAALVM_SAMPLE_APP_SRC}")
-    execute(f"jar -cfe {GRAALVM_SAMPLE_APP_JAR} jfr_sample.Main -C {GRAALVM_SAMPLE_APP_OUT} .")
+    execute(f"jar -cfe {GRAALVM_SAMPLE_APP_JAR} jfr_sample.NativeMain -C {GRAALVM_SAMPLE_APP_OUT} .")
     java_home = os.getenv("JAVA_HOME", "")
     native_image = os.path.join(java_home, "bin", "native-image") if java_home else "native-image"
     execute(f"{native_image} --enable-monitoring=jfr -jar {GRAALVM_SAMPLE_APP_JAR} "
