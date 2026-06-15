@@ -248,7 +248,7 @@ class Main(
         val description: String,
         val sectionTitle: String
     ) {
-        val nameLower: String get() = name.lowercase()
+        val nameLower: String get() = name.lowercase(java.util.Locale.ROOT)
     }
 
     data class SectionScope(
