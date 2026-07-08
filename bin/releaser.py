@@ -454,8 +454,9 @@ def run_sample_app_jfr(gc_option: str, platform: str = None):
     jfr_file = jfr_sample_app_file_name(gc_option, platform)
     os.makedirs(out_dir, exist_ok=True)
     if not os.path.exists(app_jar):
+        src_dir = os.path.dirname(GRAALVM_SAMPLE_APP_SRC)
         execute(f"javac --add-exports=java.base/jdk.internal.vm.annotation=ALL-UNNAMED "
-                f"-d {out_dir} {GRAALVM_SAMPLE_APP_SRC}")
+                f"-d {out_dir} {src_dir}/*.java")
         execute(f"jar -cfe {app_jar} jfr_sample.Main -C {out_dir} .")
     execute(["java",
              "--add-exports=java.base/jdk.internal.vm.annotation=ALL-UNNAMED",
