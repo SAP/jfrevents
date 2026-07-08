@@ -346,7 +346,7 @@ def download_graal_version(version: GraalVersion) -> Path:
 
 def download_benchmarks():
     download_file("https://github.com/renaissance-benchmarks"
-                  "/renaissance/releases/download/v0.15.0/renaissance-gpl-0.15.0.jar",
+                  "/renaissance/releases/download/v0.16.1/renaissance-gpl-0.16.1.jar",
                   RENAISSANCE_JAR)
 
 
