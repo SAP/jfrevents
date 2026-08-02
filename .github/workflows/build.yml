@@ -882,19 +882,36 @@ jobs:
             
             echo "✓ jfreventcollection:$VERSION installed successfully"
             echo "✓ Verified at: $INSTALLED_JAR"
-            
+
             # Verify JAR contents
             echo "=== JAR Contents Preview ==="
             unzip -l "$INSTALLED_JAR" | grep "me/bechberger/collector/xml" | head -10 || echo "WARNING: No xml package found in JAR"
+
+            # Also install the full (fat) JAR as version "full" — required by website/pom.xml
+            FULL_JAR=$(find build-artifacts -name "jfreventcollection-full.jar" -type f | head -1)
+            if [ -z "$FULL_JAR" ]; then
+              echo "ERROR: jfreventcollection-full.jar not found in build artifacts"
+              ls -R build-artifacts/
+              exit 1
+            fi
+            echo "Installing jfreventcollection:full (fat jar) to local Maven repository..."
+            mvn install:install-file \
+              -Dfile="$FULL_JAR" \
+              -DgroupId=me.bechberger \
+              -DartifactId=jfreventcollection \
+              -Dversion="full" \
+              -Dpackaging=jar \
+              -DgeneratePom=true
+            echo "✓ jfreventcollection:full installed successfully"
           else
             echo "=== Website-only rebuild: checking Maven cache for jfreventcollection ==="
-            CACHED_JAR=$(find "$HOME/.m2/repository/me/bechberger/jfreventcollection" -name "*.jar" -not -name "*-sources.jar" -not -name "*-javadoc.jar" 2>/dev/null | head -1)
-            if [ -z "$CACHED_JAR" ]; then
-              echo "ERROR: jfreventcollection not found in Maven cache and no build artifacts present."
+            FULL_CACHED_JAR="$HOME/.m2/repository/me/bechberger/jfreventcollection/full/jfreventcollection-full.jar"
+            if [ ! -f "$FULL_CACHED_JAR" ]; then
+              echo "ERROR: jfreventcollection:full not found in Maven cache and no build artifacts present."
               echo "Run the full build (not website-only) at least once to populate the cache."
               exit 1
             fi
-            echo "✓ Found jfreventcollection in Maven cache: $CACHED_JAR"
+            echo "✓ Found jfreventcollection:full in Maven cache: $FULL_CACHED_JAR"
           fi
 
       - name: Build website generator and generate site
