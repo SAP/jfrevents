@@ -1,6 +1,8 @@
 package me.bechberger.collector.site
 
 import com.github.mustachejava.util.DecoratedCollection
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.nio.file.Path
 import java.time.LocalDate
@@ -17,6 +19,9 @@ import me.bechberger.collector.xml.Metadata
 import me.bechberger.collector.xml.Type
 import me.bechberger.collector.xml.XmlContentType
 import me.bechberger.collector.xml.XmlType
+import org.apache.batik.transcoder.TranscoderInput
+import org.apache.batik.transcoder.TranscoderOutput
+import org.apache.batik.transcoder.image.PNGTranscoder
 import org.commonmark.parser.Parser
 import org.commonmark.renderer.html.HtmlRenderer
 import picocli.CommandLine
@@ -54,7 +59,21 @@ class Main(
         downloadBootstrapIfNeeded()
         templating.copyFromResources(target.resolve("css/style.css"), "template/style.css")
         templating.copyFromResources(target.resolve("img/sapmachine.svg"), "template/sapmachine.svg")
+        convertSvgToPng("template/sapmachine.svg", target.resolve("img/sapmachine.png"), 1200f, 630f)
         downloadDependendenciesIfNeeded()
+    }
+
+    private fun convertSvgToPng(resourcePath: String, output: Path, width: Float, height: Float) {
+        val svgBytes = Loader::class.java.classLoader.getResourceAsStream(resourcePath)?.readBytes()
+            ?: return
+        val transcoder = PNGTranscoder()
+        transcoder.addTranscodingHint(PNGTranscoder.KEY_WIDTH, width)
+        transcoder.addTranscodingHint(PNGTranscoder.KEY_HEIGHT, height)
+        val input = TranscoderInput(ByteArrayInputStream(svgBytes))
+        val buf = ByteArrayOutputStream()
+        transcoder.transcode(input, TranscoderOutput(buf))
+        output.parent.toFile().mkdirs()
+        output.toFile().writeBytes(buf.toByteArray())
     }
 
     private fun downloadDependendenciesIfNeeded() {
@@ -165,6 +184,9 @@ class Main(
         val permanentURL: String?,
         val graalVMInfo: GraalVMInfo?,
         val goatCounterUlrs: List<String>,
+        val eventCount: Int = 0,
+        val siteUrl: String = "https://sap.github.io/jfrevents",
+        val pageUrl: String = "https://sap.github.io/jfrevents/$version.html",
     )
 
     data class MainScope(
@@ -224,7 +246,8 @@ class Main(
             metadata.url!!,
             if (metadata.permanentUrl == metadata.url!!) null else metadata.permanentUrl,
             metadata.graalVMInfo?.let { GraalVMInfo(it.tag, it.version, it.url) },
-            goatCounterUrls
+            goatCounterUrls,
+            metadata.events.size
         )
         val html = templating.template(
             "main.html",
@@ -239,6 +262,28 @@ class Main(
     fun create() {
         createIndexPage()
         versions.forEach { createPage(it) }
+        createRobotsTxt()
+        createSitemapXml()
+    }
+
+    private fun createRobotsTxt() {
+        target.resolve("robots.txt").toFile().writeText(
+            "User-agent: *\nAllow: /\nSitemap: https://sap.github.io/jfrevents/sitemap.xml\n"
+        )
+    }
+
+    private fun createSitemapXml() {
+        val lastmod = LocalDate.ofInstant(Loader.getCreationDate(), ZoneId.systemDefault())
+            .format(DateTimeFormatter.ISO_LOCAL_DATE)
+        val sb = StringBuilder()
+        sb.appendLine("""<?xml version="1.0" encoding="UTF-8"?>""")
+        sb.appendLine("""<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">""")
+        sb.appendLine("""  <url><loc>https://sap.github.io/jfrevents/</loc><lastmod>$lastmod</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>""")
+        versions.forEach { version ->
+            sb.appendLine("""  <url><loc>https://sap.github.io/jfrevents/$version.html</loc><lastmod>$lastmod</lastmod><changefreq>weekly</changefreq><priority>${if (version == ltsVersions.last()) "0.9" else "0.7"}</priority></url>""")
+        }
+        sb.appendLine("</urlset>")
+        target.resolve("sitemap.xml").toFile().writeText(sb.toString())
     }
 
     data class SectionEntryScope(

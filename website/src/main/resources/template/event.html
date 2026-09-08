@@ -71,8 +71,8 @@
     {{#descriptionMissing}}
     <p class="description-missing">No additional description available.
       Write your own and contribute it to
-      <a href="https://github.com/SAP/jfrevents/blob/main/additional.xml">jfreventcollector</a>
-      or directly to the <a href="https://github.com/openjdk/jdk">OpenJDK</a>.
+      <a href="https://github.com/SAP/jfrevents/blob/main/additional.xml" rel="noopener">jfreventcollector</a>
+      or directly to the <a href="https://github.com/openjdk/jdk" rel="noopener">OpenJDK</a>.
     </p>
     {{/descriptionMissing}}
   </p>
@@ -82,6 +82,7 @@
 {{#configurations}}
 <p>
 <table class="table event-config table-hover mb-5">
+  <caption class="visually-hidden">Event configuration settings across JFR profiles</caption>
   <thead>
   <tr class="table-header-row">
     <th scope="col" style="width: 10em;">Configuration</th>
