@@ -10,7 +10,7 @@
         <div class="code-snippets">
             {{#contexts}}
             <p>
-                <a href="{{url}}" class="path-url">{{path}}</a>:
+                <a href="{{url}}" class="path-url" rel="noopener" title="View {{path}} in the OpenJDK source repository">{{path}}</a>:
 <pre class="line-numbers language-{{language}}" data-line-offset="{{startLine}}" data-start="{{startLine}}" data-line="{{#highlightedLines}}{{.}},{{/highlightedLines}}">
 <code>{{snippet}}</code>
 </pre>

@@ -103,6 +103,16 @@
             <artifactId>picocli</artifactId>
             <version>4.7.7</version>
         </dependency>
+        <dependency>
+            <groupId>org.apache.xmlgraphics</groupId>
+            <artifactId>batik-transcoder</artifactId>
+            <version>1.18</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.xmlgraphics</groupId>
+            <artifactId>batik-codec</artifactId>
+            <version>1.18</version>
+        </dependency>
     </dependencies>
 
     <repositories>
