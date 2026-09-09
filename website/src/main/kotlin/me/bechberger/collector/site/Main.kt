@@ -966,6 +966,7 @@ class Main(
             "https://cdnjs.cloudflare.com/ajax/libs/prism/9000.0.1/plugins/line-highlight/prism-line-highlight.min.js" to "js/prism-line-highlight.min.js",
             "https://cdnjs.cloudflare.com/ajax/libs/prism/9000.0.1/plugins/line-numbers/prism-line-numbers.min.css" to "css/prism-line-numbers.min.css",
             "https://cdnjs.cloudflare.com/ajax/libs/prism/9000.0.1/plugins/line-numbers/prism-line-numbers.min.js" to "js/prism-line-numbers.min.js",
+            "https://cdn.jsdelivr.net/npm/minisearch@7/dist/umd/index.min.js" to "js/minisearch.min.js",
         )
     }
 }
