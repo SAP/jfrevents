@@ -233,6 +233,7 @@
 <script src="js/prism-java.min.js"></script>
 <script src="js/prism-line-highlight.min.js"></script>
 <script src="js/prism-line-numbers.min.js"></script>
+<script src="js/minisearch.min.js"></script>
 <script>
 $(function () {
 $('.appears span').popover({
@@ -3874,6 +3875,31 @@ $(function() {
 
     console.log('🔍 [SEARCH] Search functionality with suggestions initialized');
 });
+
+// MiniSearch index — loaded from build-time JSON, used for name-match ranking and suggestions
+window.jfrMiniSearch = null;
+(function() {
+    if (typeof MiniSearch === 'undefined') return;
+    fetch('search-index-{{info.version}}.json')
+        .then(r => r.json())
+        .then(function(docs) {
+            const ms = new MiniSearch({
+                fields: ['name', 'description', 'section'],
+                storeFields: ['id', 'name', 'section'],
+                searchOptions: {
+                    boost: { name: 10, section: 2 },
+                    fuzzy: 0.2,
+                    prefix: true
+                }
+            });
+            ms.addAll(docs);
+            window.jfrMiniSearch = ms;
+            console.log('🔍 [MINISEARCH] Index loaded:', docs.length, 'events');
+        })
+        .catch(function(e) {
+            console.warn('🔍 [MINISEARCH] Failed to load index:', e);
+        });
+})();
 
 // Helper function to find the next selectable suggestion (skipping warnings)
 function findNextSelectableSuggestion(suggestionItems, currentIndex, direction) {
