@@ -2016,6 +2016,7 @@ function performSearch(query) {
     let totalVisible = 0;
     let firstVisibleElement = null;
     let exactMatchElement = null;
+    let bestMatchScore = 0;
 
     eventElements.forEach((eventEl, index) => {
         const eventHeader = eventEl.previousElementSibling;
@@ -2035,33 +2036,13 @@ function performSearch(query) {
             if (!firstVisibleElement) {
                 firstVisibleElement = eventHeader || eventEl;
             }
-            
-            // Check for exact matches when doing name or full-text search
-            if (!exactMatchElement && textSearch && textSearch.trim()) {
-                const eventName = eventEl.dataset.name || '';
-                const searchTerm = textSearch.trim().toLowerCase();
-                
-                // Check for exact name match (case-insensitive)
-                if (eventName.toLowerCase() === searchTerm) {
+
+            // Score-based best-match selection (replaces exact-match-only logic)
+            if (textSearch && textSearch.trim()) {
+                const score = scoreEventForSearch(eventEl, textSearch);
+                if (score > bestMatchScore) {
+                    bestMatchScore = score;
                     exactMatchElement = eventHeader || eventEl;
-                }
-                // Check for exact match in event content if no name match yet
-                else if (!exactMatchElement) {
-                    // Check if the search term appears as a complete word in the event content
-                    const eventContent = eventEl.textContent || '';
-                    
-                    // Use word boundary regex to find exact word matches
-                    try {
-                        const wordBoundaryRegex = new RegExp('\\b' + searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i');
-                        if (wordBoundaryRegex.test(eventContent)) {
-                            exactMatchElement = eventHeader || eventEl;
-                        }
-                    } catch (e) {
-                        // Fallback to simple includes if regex fails (e.g., invalid regex characters)
-                        if (eventContent.toLowerCase().includes(searchTerm)) {
-                            exactMatchElement = eventHeader || eventEl;
-                        }
-                    }
                 }
             }
         } else {
@@ -2203,6 +2184,32 @@ function updateSearchResultsIndicator(visible, total) {
     } else {
         indicator.style.opacity = '0';
     }
+}
+
+// Score an event element against a text search term for scroll-target ranking.
+// Higher score = better match. Name matches rank far above content matches.
+function scoreEventForSearch(eventElement, searchTerm) {
+    if (!searchTerm) return 0;
+    const name = (eventElement.dataset.name || '').toLowerCase();
+    const term = searchTerm.trim().toLowerCase();
+    if (!term) return 0;
+
+    const nameStripped = name.replace(/^jdk\./, '');
+    const termStripped = term.replace(/^jdk\./, '');
+    if (name === term || nameStripped === termStripped) return 100;
+    if (name.startsWith(term) || nameStripped.startsWith(termStripped)) return 80;
+    if (name.includes(term)) return 60;
+
+    if (window.jfrMiniSearch) {
+        const results = window.jfrMiniSearch.search(searchTerm, { limit: 1 });
+        if (results.length > 0 && results[0].id.toLowerCase() === name) return 50;
+    }
+
+    const desc = (eventElement.dataset.description || '').toLowerCase();
+    const section = (eventElement.dataset.section || '').toLowerCase();
+    if (desc.includes(term) || section.includes(term)) return 10;
+
+    return 5;
 }
 
 // Helper function to scroll to search results with exact match prioritization
