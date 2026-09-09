@@ -3875,13 +3875,20 @@ $(function() {
         }
     });
 
-    // Focus search bar on Ctrl+F
+    // Focus search bar on shift+shift (two Shift presses within 400ms)
+    let lastShiftTime = 0;
     document.addEventListener('keydown', function(e) {
-        if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-            e.preventDefault();
-            searchInput.focus();
-            searchInput.select(); // Select existing text for easy replacement
-            console.log('🔍 [SEARCH] Ctrl+F pressed - focused search bar');
+        if (e.key === 'Shift' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            const now = Date.now();
+            if (now - lastShiftTime < 400) {
+                e.preventDefault();
+                searchInput.focus();
+                searchInput.select();
+                lastShiftTime = 0;
+                console.log('🔍 [SEARCH] shift+shift pressed - focused search bar');
+            } else {
+                lastShiftTime = now;
+            }
         }
     });
 
