@@ -261,7 +261,10 @@ class Main(
 
     fun create() {
         createIndexPage()
-        versions.forEach { createPage(it) }
+        versions.forEach { version ->
+            createPage(version)
+            createSearchIndex(version, Loader.loadVersion(version))
+        }
         createRobotsTxt()
         createSitemapXml()
     }
@@ -284,6 +287,20 @@ class Main(
         }
         sb.appendLine("</urlset>")
         target.resolve("sitemap.xml").toFile().writeText(sb.toString())
+    }
+
+    private fun createSearchIndex(version: Int, metadata: Metadata) {
+        val entries = groupEventsByTopLevelCategory(metadata).flatMap { (sectionTitle, events) ->
+            events.map { event ->
+                val desc = (event.description ?: "") + (event.additionalDescription ?: "")
+                val escapedName = event.name.replace("\\", "\\\\").replace("\"", "\\\"")
+                val escapedDesc = desc.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", " ").replace("\r", "")
+                val escapedSection = sectionTitle.replace("\\", "\\\\").replace("\"", "\\\"")
+                """{"id":"$escapedName","name":"$escapedName","description":"$escapedDesc","section":"$escapedSection"}"""
+            }
+        }
+        val json = "[${entries.joinToString(",")}]"
+        target.resolve("search-index-$version.json").toFile().writeText(json)
     }
 
     data class SectionEntryScope(
