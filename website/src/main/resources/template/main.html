@@ -3227,13 +3227,18 @@ window.searchSuggestions = {
             if (currentTerm.length === 0) {
                 // If no current term (e.g., after || or after complete pattern), show popular events
                 matchingEvents = eventNames
-                    .filter(name => name.includes('GC') || name.includes('Thread') || 
+                    .filter(name => name.includes('GC') || name.includes('Thread') ||
                                    name.includes('Class') || name.includes('Method') ||
                                    name.includes('Memory') || name.includes('Java') ||
                                    name.includes('Monitor') || name.includes('Exception'))
                     .slice(0, 6);
+            } else if (window.jfrMiniSearch && currentTerm.length >= 2) {
+                // Use MiniSearch for ranked event name suggestions
+                matchingEvents = window.jfrMiniSearch
+                    .search(currentTerm, { limit: 8, fields: ['name'], boost: { name: 10 }, prefix: true, fuzzy: 0.2 })
+                    .map(r => r.id);
             } else {
-                // If we have a partial term, filter by it
+                // Fallback: simple includes filter
                 matchingEvents = eventNames
                     .filter(name => name.toLowerCase().includes(currentTermLower))
                     .slice(0, 8);
